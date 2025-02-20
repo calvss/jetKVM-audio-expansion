@@ -1,0 +1,3 @@
+[submodule "kvm-audio-sw/pico-sdk"]
+	path = kvm-audio-sw/pico-sdk
+	url = git@github.com:raspberrypi/pico-sdk.git
