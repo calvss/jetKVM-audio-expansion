@@ -1,0 +1,17 @@
+{
+    "version": 8,
+    "configurePresets": [
+        {
+            "name": "pico2",
+            "displayName": "GCC 12.2.1 arm-none-eabi",
+            "description": "Using compilers: C = /usr/bin/arm-none-eabi-gcc, CXX = /usr/bin/arm-none-eabi-g++",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "CMAKE_C_COMPILER": "/usr/bin/arm-none-eabi-gcc",
+                "CMAKE_CXX_COMPILER": "/usr/bin/arm-none-eabi-g++",
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        }
+    ]
+}
