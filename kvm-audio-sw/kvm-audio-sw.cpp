@@ -42,7 +42,7 @@ int main()
 
         if(readFlag)
         {
-            printf("%lu\n", count);
+            printf("%lu vscode!\n", count);
             count = 0;
             readFlag = false;
         }
