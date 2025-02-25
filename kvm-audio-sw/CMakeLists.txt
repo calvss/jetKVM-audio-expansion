@@ -47,6 +47,7 @@ target_include_directories(kvm-audio-sw PRIVATE
 target_link_libraries(kvm-audio-sw 
         hardware_adc
         hardware_uart
+        hardware_dma
         )
 
 pico_add_extra_outputs(kvm-audio-sw)
