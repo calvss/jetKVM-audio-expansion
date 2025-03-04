@@ -11,11 +11,12 @@
 #define ADC_CHANNEL_1 1
 #define BUFFER_SIZE 16384
 #define BUFFER_SIZE_BYTES BUFFER_SIZE*2 // 16-bits per array element
-#define CAPTURE_RING_BITS 15 // Number of bits to store the address of 1024*2 bytes
+#define CAPTURE_RING_BITS 15 // Number of bits to store the address of 16384*2 bytes
 
 #define UART_TX_PIN 16
 #define UART_RX_PIN 17
 
+// need to 0-align the buffer to make it work with the pico's circular DMA
 static uint16_t buffer1[BUFFER_SIZE] __attribute__((aligned(BUFFER_SIZE_BYTES)));
 static uint16_t buffer2[BUFFER_SIZE] __attribute__((aligned(BUFFER_SIZE_BYTES)));
 
@@ -45,6 +46,8 @@ int main()
     sleep_ms(5000);
     // printf("Start up\n");
     uart_init(uart0, 3'000'000);
+
+    // disable fifo buffering since we want to send bytes as fast as possible
     uart_set_fifo_enabled(uart0, false);
 
     gpio_set_function(UART_TX_PIN, UART_FUNCSEL_NUM(uart0, UART_TX_PIN));
@@ -70,9 +73,11 @@ int main()
     );
 
     // set ADC clock to 96 kHz (499 + 1 clock cycles at 48MHz = 10.416667 microseconds)
+    // 96 kHz = 48kHz sample rate for each audio channel
     adc_set_clkdiv(499);
     // adc_set_clkdiv(2999);
 
+    // obtain a DMA, function call will panic if there's no DMAs available
     dma_channel_1 = dma_claim_unused_channel(true);
     dma_channel_2 = dma_claim_unused_channel(true);
 
@@ -99,7 +104,7 @@ int main()
             buffer1,         // dst
             &adc_hw->fifo,  // src
             BUFFER_SIZE,  // transfer count
-            true            // do not start immediately
+            true            // start immediately
         );
 
     }
@@ -127,7 +132,7 @@ int main()
             buffer2,         // dst
             &adc_hw->fifo,  // src
             BUFFER_SIZE,  // transfer count
-            false            // do not start immediately
+            false            // do not start immediately, channel 1 will trigger this when done
         );
     }
 
@@ -139,7 +144,12 @@ int main()
 
     while(true)
     {
+        // each iteration of this loop processes one audio packet
+        // BUFFER_SIZE samples per packet, with a 0xffff stop byte at the end
+
         uint16_t *buffer;
+
+        // possible off-by-one error? not sure
         uint8_t char_buffer[BUFFER_SIZE_BYTES + 1];
         uint8_t stop_bytes[2];
         stop_bytes[0] = 0xff;
@@ -165,13 +175,14 @@ int main()
 
         // convert uint16_t buffer into a uint8 array (little endian)
         // need to send chars through UART, not int16
-        // uart_puts(uart0, "Hello world!\n");
         for(int i = 0, j = 0; i < BUFFER_SIZE; i++, j+=2)
         {
             uint8_t lower_byte;
             uint8_t upper_byte;
             
             // reserve 0xffff for the end-of-packet marker
+            // this might cause some audio artifacts
+            // but if you're hitting 0xffff regularly you have bigger problems (clipping)
             if(buffer[i] == 0xffff)
             {
                 lower_byte = 0xfe;

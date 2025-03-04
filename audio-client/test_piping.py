@@ -9,12 +9,13 @@ if __name__ == "__main__":
             pass
 
         if(sys.stdin.buffer.read(1) == b'\xff'):
-            # 0xffff was reached, stop eating bytes
+            # 0xffff was reached, stop discarding bytes
             break;
         else:
-            # just a random isolated 0xff, keep eating bytes
+            # just a random isolated 0xff, keep discarding bytes
             pass
 
+    # keep track of which channel we're working on, since samples are interleaved L-R-L-R...
     leftChannel = True
     fourBytes = [None] * 4
     while(twoBytes := sys.stdin.buffer.read(2)):
@@ -22,7 +23,7 @@ if __name__ == "__main__":
             # if we hit the end of the file
             break
         elif(twoBytes == b'\xff\xff'):
-            # if we hit the end of a packet, skip it
+            # if we hit the end of a packet, skip
             continue
         else:
             # alternate reading left and right channel (interleaved)
