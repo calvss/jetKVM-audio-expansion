@@ -9,26 +9,28 @@
 
 #define ADC_CHANNEL_0 0
 #define ADC_CHANNEL_1 1
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 16384
 #define BUFFER_SIZE_BYTES BUFFER_SIZE*2 // 16-bits per array element
-#define CAPTURE_RING_BITS 11 // Number of bits to store the address of 1024*2 bytes
+#define CAPTURE_RING_BITS 15 // Number of bits to store the address of 1024*2 bytes
+
+#define UART_TX_PIN 16
+#define UART_RX_PIN 17
 
 static uint16_t buffer1[BUFFER_SIZE] __attribute__((aligned(BUFFER_SIZE_BYTES)));
 static uint16_t buffer2[BUFFER_SIZE] __attribute__((aligned(BUFFER_SIZE_BYTES)));
 
+static bool buffer1_is_ready = false;
+static bool buffer2_is_ready = false;
+
 static uint32_t irq_counter1 = 0;
 static uint32_t irq_counter2 = 0;
 static uint32_t irq_counter3 = 0;
+static uint8_t loop_overspeed_counter = 0;
 
 unsigned int dma_channel_1;
 unsigned int dma_channel_2;
 
-repeating_timer_t timer;
-bool print = false;
-
-uint16_t alternateSum(uint16_t *array, size_t n);
 void dma_handler();
-bool timer_callback(repeating_timer_t *rt);
 
 int main()
 {
@@ -39,9 +41,14 @@ int main()
     gpio_put(PICO_DEFAULT_LED_PIN, false);
     sleep_ms(1000);
     gpio_put(PICO_DEFAULT_LED_PIN, true);
+
     sleep_ms(5000);
-    printf("Start up\n");
+    // printf("Start up\n");
     uart_init(uart0, 3'000'000);
+    uart_set_fifo_enabled(uart0, false);
+
+    gpio_set_function(UART_TX_PIN, UART_FUNCSEL_NUM(uart0, UART_TX_PIN));
+    gpio_set_function(UART_RX_PIN, UART_FUNCSEL_NUM(uart0, UART_RX_PIN));
 
     adc_gpio_init(26 + ADC_CHANNEL_0);
     adc_gpio_init(26 + ADC_CHANNEL_1);
@@ -130,32 +137,59 @@ int main()
     irq_set_mask_enabled(1 << DMA_IRQ_0, true);
     adc_run(true);
 
-    if (!add_repeating_timer_us(1000000, timer_callback, NULL, &timer)) {
-        printf("Failed to add timer\n");
-        return 1;
-    }
-
     while(true)
     {
-        if(print)
-        {    
-            printf("1: %5lu, 2: %5lu, 3: %5lu\n", irq_counter1, irq_counter2, irq_counter3);
-            print = false;
-        }
-    }
-}
+        uint16_t *buffer;
+        uint8_t char_buffer[BUFFER_SIZE_BYTES + 1];
+        uint8_t stop_bytes[2];
+        stop_bytes[0] = 0xff;
+        stop_bytes[1] = 0xff;
 
-/*! \brief Sum of every other element of an array.
- * \return Sums every other element to handle interleaved left-right ADC samples.
- */
-uint16_t alternateSum(uint16_t *array, size_t n)
-{
-    uint16_t total = 0;
-    for(int i = 0, j = 0; i < n; i++, j += 2)
-    {
-        total += array[j];
+        if(buffer1_is_ready)
+        {
+            buffer = buffer1;
+            buffer1_is_ready = false;
+        }
+        else if(buffer2_is_ready)
+        {
+            buffer = buffer2;
+            buffer2_is_ready = false;
+        }
+        else
+        {
+            loop_overspeed_counter++;
+
+            // don't go on to process the packet if there's no new data
+            continue;
+        }
+
+        // convert uint16_t buffer into a uint8 array (little endian)
+        // need to send chars through UART, not int16
+        // uart_puts(uart0, "Hello world!\n");
+        for(int i = 0, j = 0; i < BUFFER_SIZE; i++, j+=2)
+        {
+            uint8_t lower_byte;
+            uint8_t upper_byte;
+            
+            // reserve 0xffff for the end-of-packet marker
+            if(buffer[i] == 0xffff)
+            {
+                lower_byte = 0xfe;
+                upper_byte = 0xff;
+            }
+            else
+            {
+                lower_byte = buffer[i] & 0xff;
+                upper_byte = buffer[i] >> 8;
+            }
+
+            char_buffer[j] = lower_byte;
+            char_buffer[j+1] = upper_byte;
+        }
+
+        uart_write_blocking(uart0, char_buffer, BUFFER_SIZE_BYTES);
+        uart_write_blocking(uart0, stop_bytes, 2);
     }
-    return total;
 }
 
 void dma_handler()
@@ -164,6 +198,8 @@ void dma_handler()
     if (dma_hw->ints0 & 1u << dma_channel_1)
     {
         irq_counter1++;
+        buffer1_is_ready = true;
+
         // Clear the interrupt request.
         dma_hw->ints0 = 1u << dma_channel_1;
     }
@@ -171,6 +207,8 @@ void dma_handler()
     else if (dma_hw->ints0 & 1u << dma_channel_2)
     {
         irq_counter2++;
+        buffer2_is_ready = true;
+
         // Clear the interrupt request.
         dma_hw->ints0 = 1u << dma_channel_2;
     }
@@ -179,10 +217,4 @@ void dma_handler()
         // Should never happen
         irq_counter3++;
     }
-}
-
-bool timer_callback(repeating_timer_t *rt)
-{
-    print = true;
-    return true;
 }
