@@ -37,8 +37,16 @@ if __name__ == "__main__":
                 # once we have the left and right channel, assemble the frame
                 left_int = int.from_bytes(fourBytes[0:2], byteorder='little')
                 right_int = int.from_bytes(fourBytes[2:4], byteorder='little')
+                
+                if(left_int >= 4095 or right_int >= 4095):
+                    print("clip", file=sys.stderr)
+                
 
-                sys.stdout.buffer.write(struct.pack('<HH',left_int, right_int))
+                try:
+                    sys.stdout.buffer.write(struct.pack('<hh',((left_int-2048)*16), ((right_int-2048)*16)))
+                except Exception as e:
+                    print(e, file=sys.stderr)
+                    print(left_int, right_int, file=sys.stderr)
             
     # # read 4 bytes at a time, since each frame is two 16-bit integers
     # # stereo 16-bit PCM encoding
