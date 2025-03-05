@@ -19,17 +19,14 @@
 // need to 0-align the buffer to make it work with the pico's circular DMA
 static uint16_t buffer1[BUFFER_SIZE] __attribute__((aligned(BUFFER_SIZE_BYTES)));
 static uint16_t buffer2[BUFFER_SIZE] __attribute__((aligned(BUFFER_SIZE_BYTES)));
+static uint16_t *active_buffer;
 
-static bool buffer1_is_ready = false;
-static bool buffer2_is_ready = false;
+static bool data_ready = false;
 
-static uint32_t irq_counter1 = 0;
-static uint32_t irq_counter2 = 0;
-static uint32_t irq_counter3 = 0;
 static uint8_t loop_overspeed_counter = 0;
 
-unsigned int dma_channel_1;
-unsigned int dma_channel_2;
+static unsigned int dma_channel_1;
+static unsigned int dma_channel_2;
 
 void dma_handler();
 
@@ -42,6 +39,8 @@ int main()
     gpio_put(PICO_DEFAULT_LED_PIN, false);
     sleep_ms(1000);
     gpio_put(PICO_DEFAULT_LED_PIN, true);
+    sleep_ms(50);
+    gpio_put(PICO_DEFAULT_LED_PIN, false);
 
     sleep_ms(5000);
     // printf("Start up\n");
@@ -75,7 +74,7 @@ int main()
     // set ADC clock to 96 kHz (499 + 1 clock cycles at 48MHz = 10.416667 microseconds)
     // 96 kHz = 48kHz sample rate for each audio channel
     adc_set_clkdiv(499);
-    // adc_set_clkdiv(2999);
+    // adc_set_clkdiv(319);
 
     // obtain a DMA, function call will panic if there's no DMAs available
     dma_channel_1 = dma_claim_unused_channel(true);
@@ -147,59 +146,57 @@ int main()
         // each iteration of this loop processes one audio packet
         // BUFFER_SIZE samples per packet, with a 0xffff stop byte at the end
 
-        uint16_t *buffer;
-
         // possible off-by-one error? not sure
         uint8_t char_buffer[BUFFER_SIZE_BYTES + 1];
         uint8_t stop_bytes[2];
         stop_bytes[0] = 0xff;
         stop_bytes[1] = 0xff;
 
-        if(buffer1_is_ready)
+        if(data_ready)
         {
-            buffer = buffer1;
-            buffer1_is_ready = false;
-        }
-        else if(buffer2_is_ready)
-        {
-            buffer = buffer2;
-            buffer2_is_ready = false;
+            data_ready = false;
+
+            // convert uint16_t buffer into a uint8 array (little endian)
+            // need to send chars through UART, not int16
+            for(int i = 0, j = 0; i < BUFFER_SIZE; i++, j+=2)
+            {
+                uint8_t lower_byte;
+                uint8_t upper_byte;
+                
+                // reserve 0xffff for the end-of-packet marker
+                // this might cause some audio artifacts
+                // but if you're hitting 0xffff regularly you have bigger problems (clipping)
+                if(active_buffer[i] == 0xffff)
+                {
+                    lower_byte = 0xff;
+                    upper_byte = 0xfe;
+                }
+                else
+                {
+                    lower_byte = active_buffer[i] & 0xff;
+                    upper_byte = active_buffer[i] >> 8;
+                }
+
+                char_buffer[j] = lower_byte;
+                char_buffer[j+1] = upper_byte;
+            }
+
+            uart_write_blocking(uart0, char_buffer, BUFFER_SIZE_BYTES);
+            uart_write_blocking(uart0, stop_bytes, 2);
         }
         else
         {
             loop_overspeed_counter++;
 
+            // toggle the status LED every time the overspeed counter overflows
+            if(!loop_overspeed_counter)
+            {
+                gpioc_bit_out_xor(PICO_DEFAULT_LED_PIN);
+            }
+
             // don't go on to process the packet if there's no new data
             continue;
         }
-
-        // convert uint16_t buffer into a uint8 array (little endian)
-        // need to send chars through UART, not int16
-        for(int i = 0, j = 0; i < BUFFER_SIZE; i++, j+=2)
-        {
-            uint8_t lower_byte;
-            uint8_t upper_byte;
-            
-            // reserve 0xffff for the end-of-packet marker
-            // this might cause some audio artifacts
-            // but if you're hitting 0xffff regularly you have bigger problems (clipping)
-            if(buffer[i] == 0xffff)
-            {
-                lower_byte = 0xfe;
-                upper_byte = 0xff;
-            }
-            else
-            {
-                lower_byte = buffer[i] & 0xff;
-                upper_byte = buffer[i] >> 8;
-            }
-
-            char_buffer[j] = lower_byte;
-            char_buffer[j+1] = upper_byte;
-        }
-
-        uart_write_blocking(uart0, char_buffer, BUFFER_SIZE_BYTES);
-        uart_write_blocking(uart0, stop_bytes, 2);
     }
 }
 
@@ -208,8 +205,8 @@ void dma_handler()
     // DMA chan 1:
     if (dma_hw->ints0 & 1u << dma_channel_1)
     {
-        irq_counter1++;
-        buffer1_is_ready = true;
+        active_buffer = buffer1;
+        data_ready = true;
 
         // Clear the interrupt request.
         dma_hw->ints0 = 1u << dma_channel_1;
@@ -217,15 +214,14 @@ void dma_handler()
     // else DMA chan 2:
     else if (dma_hw->ints0 & 1u << dma_channel_2)
     {
-        irq_counter2++;
-        buffer2_is_ready = true;
-
+        active_buffer = buffer2;
+        data_ready = true;
         // Clear the interrupt request.
         dma_hw->ints0 = 1u << dma_channel_2;
     }
     else
     {
         // Should never happen
-        irq_counter3++;
+        ;
     }
 }
