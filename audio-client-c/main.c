@@ -75,7 +75,7 @@ int main(int, char**){
         // Set to block reads until some data is available, or timeout occurs
         // Set timeout to 1s
         // Thes variables are defined as cc_t type (unsigned char for the jetKVM buildroot)
-        tty.c_cc[VTIME] = 10; // timeout = 10 deciseconds = 1 second
+        tty.c_cc[VTIME] = 0; // timeout = 10 deciseconds = 1 second
         tty.c_cc[VMIN] = 100; // read() will return on timeout even if no bytes are read
 
         // Save tty settings, also checking for error
@@ -127,7 +127,7 @@ int main(int, char**){
 
     // now that we reached the start of a packet, start decoding bytes
     // keep track of which channel we're working on, since samples are interleaved L-R-L-R...
-    bool leftChannel = false;
+    bool leftChannel = true;
     // each audio frame is two int16s
     int16_t frame[2];
     const uint8_t packetBoundary[2] = {0xff, 0xff};
@@ -140,11 +140,13 @@ int main(int, char**){
         if(n != 2)
         {
             fprintf(stderr, "Error %d: %s\n", errno, strerror(errno));
+            leftChannel = true;
             continue;
         }
         else if(memcmp(buffer, packetBoundary,2) == 0)
         {
             // if we hit a packet boundary, skip decoding its value
+            leftChannel = true;
             continue;
         }
         else
@@ -162,12 +164,12 @@ int main(int, char**){
             // Perhaps even hosting a RTSP stream from the jetKVM directly so any media client can receive it, like VLC or mpv or something
             if(leftChannel)
             {
-                frame[0] = (int16_t)((int32_t)(( (uint16_t)buffer[1] << 8 ) | buffer[0]) - 2048) << 4;
+                frame[0] = (int16_t)((int32_t)(( (uint16_t)buffer[1] << 8 ) | buffer[0]) - 2048) << 3;
                 leftChannel = false;
             }
             else
             {
-                frame[1] = (int16_t)((int32_t)(( (uint16_t)buffer[1] << 8 ) | buffer[0]) - 2048) << 4;
+                frame[1] = (int16_t)((int32_t)(( (uint16_t)buffer[1] << 8 ) | buffer[0]) - 2048) << 3;
                 leftChannel = true;
 
                 // once we have the right channel, the frame is complete.
