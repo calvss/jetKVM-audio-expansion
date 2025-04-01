@@ -15,3 +15,5 @@ On the client: `ssh root@jetkvm "/root/audio-client-c" | ffplay -fflags nobuffer
 
 # Known issues:
 If you're going to fab this board design you should know the tip and sleeve contacts on the 3.5mm jack footprint are backwards.
+
+![Overview of the assembled PCB](image.jpg)
